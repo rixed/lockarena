@@ -1,0 +1,9 @@
+LockArena
+
+A small C program to test various deadlock prevention methods.
+
+Suppose you have a program with many threads, many locks, and locks
+ordering is unpredictable. You then have no other choice than to either
+detect or prevent deadlocks. This small programm reproduce this setting
+and let you implement/tests various algorithms.
+
