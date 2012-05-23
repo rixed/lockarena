@@ -7,3 +7,7 @@ ordering is unpredictable. You then have no other choice than to either
 detect or prevent deadlocks. This small programm reproduce this setting
 and let you implement/tests various algorithms.
 
+Build with:
+
+CPPFLAGS=-DNDEBUG make
+
