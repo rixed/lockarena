@@ -124,7 +124,7 @@ static int matrix_lock(unsigned t, unsigned l)
 	THREAD_SET(t, l);
 	pthread_mutex_unlock(&m_lock);	// since I've said that I'm waiting for the lock I can safely release m_lock
 
-	recurs_count[t * nb_locks + l]++;
+	recurs_count[t * nb_locks + l] = 1;
 	if (0 != pthread_mutex_lock(locks+l)) {
 		assert(!"Cannot take lock?!");
 	}
@@ -186,7 +186,7 @@ static int ordered_lock(unsigned t, unsigned l)
 		}
 	}
 
-	recurs_count[t * nb_locks + l]++;
+	recurs_count[t * nb_locks + l] = 1;
 	if (0 != pthread_mutex_lock(locks+l)) {
 		assert(!"Cannot take lock?!");
 	}
