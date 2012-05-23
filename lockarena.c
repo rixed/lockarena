@@ -228,11 +228,10 @@ static void *thread_run(void *idx)
 #	endif
 
 	while (! quit) {
-		unsigned nb_res = rand() % nb_claimed;	// how many locks I'm going to claim
-		unsigned claimed[nb_res];
+		unsigned claimed[nb_claimed];
 		unsigned l, c = 0;
 		__sync_add_and_fetch(&nb_trys, 1);
-		for (l = 0; l < nb_res; l++) {
+		for (l = 0; l < nb_claimed; l++) {
 			unsigned const lock = rand() % nb_locks;
 #			ifndef NDEBUG
 			printf("thread %u: taking lock %u\n", t, lock);
@@ -250,7 +249,7 @@ static void *thread_run(void *idx)
 			printf("thread %u: took lock %u\n", t, lock);
 #			endif
 		}
-		if (l == nb_res) {	// do some work with the locks
+		if (l == nb_claimed) {	// do some work with the locks
 			// Sleep for some time with my locks
 			usleep(rand() % max_sleep_usec);
 		}
