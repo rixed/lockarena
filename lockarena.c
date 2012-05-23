@@ -52,6 +52,9 @@ static unsigned thread_stride;	// stride from one row to the next in the lock ma
 #define THREAD_SET(t, l)   (thread_wq[((t) << thread_stride) + (l)/NB_BITS_PER_CELL] |= (1ULL << ((l)%NB_BITS_PER_CELL)))
 #define THREAD_CLEAR(t, l) (thread_wq[((t) << thread_stride) + (l)/NB_BITS_PER_CELL] &= ~(1ULL << ((l)%NB_BITS_PER_CELL)))
 
+// This method allow us to detect recursive locks easily
+static unsigned *recurs_count; 	// how many times each mutex is locked (protected by the lock itself, ensure you have it first!)
+
 static unsigned upper_multiple_of(unsigned n, unsigned m)
 {
 	unsigned u = m;
@@ -89,17 +92,19 @@ static bool is_looping(unsigned t, unsigned l, unsigned target)
 
 static int matrix_lock(unsigned t, unsigned l)
 {
+	if (recurs_count[t * nb_locks + l] > 0) {
+		recurs_count[t * nb_locks + l]++;
+#		ifndef NDEBUG
+		printf("thread %u: already got lock %u\n", t, l);
+#		endif
+		return 0;
+	}
+
 	if (0 != pthread_mutex_lock(&m_lock)) {
 		assert(!"Cannot lock m_lock!?");
 	}
 
-	if (THREAD_HOLD(t, l)) {
-#		ifndef NDEBUG
-		printf("thread %u: already got lock %u\n", t, l);
-#		endif
-		pthread_mutex_unlock(&m_lock);
-		return -1;
-	}
+	assert(! THREAD_HOLD(t, l));
 
 	for (unsigned tt = 0; tt < nb_threads; tt ++) {
 		if (! THREAD_HOLD(tt, l)) continue;
@@ -108,6 +113,7 @@ static int matrix_lock(unsigned t, unsigned l)
 			printf("thread %u: lock %u would deadlock\n", t, l);
 #			endif
 			pthread_mutex_unlock(&m_lock);
+
 			return -1;
 		}
 	}
@@ -118,6 +124,7 @@ static int matrix_lock(unsigned t, unsigned l)
 	THREAD_SET(t, l);
 	pthread_mutex_unlock(&m_lock);	// since I've said that I'm waiting for the lock I can safely release m_lock
 
+	recurs_count[t * nb_locks + l]++;
 	if (0 != pthread_mutex_lock(locks+l)) {
 		assert(!"Cannot take lock?!");
 	}
@@ -126,6 +133,10 @@ static int matrix_lock(unsigned t, unsigned l)
 
 static void matrix_unlock(unsigned t, unsigned l)
 {
+	if (--recurs_count[t * nb_locks + l] > 0) {
+		return;
+	}
+
 	if (0 != pthread_mutex_lock(&m_lock)) {
 		assert(!"Cannot lock m_lock!?");
 	}
@@ -282,6 +293,7 @@ int main(int nb_args, char **args)
 	thread_stride = upper_multiple_of(nb_locks, NB_BITS_PER_CELL);
 	pthread_ids = malloc(nb_threads * sizeof(*pthread_ids));
 	locks = malloc(nb_locks * sizeof(*locks));
+	recurs_count = calloc(nb_threads * nb_locks, sizeof(*recurs_count));
 	size_t const thread_wq_sz = (nb_threads << thread_stride) * sizeof(*thread_wq);
 	thread_wq = calloc(thread_wq_sz, 1);
 	if (!pthread_ids || !locks || !thread_wq) {
@@ -308,6 +320,7 @@ int main(int nb_args, char **args)
 
 	free(pthread_ids);
 	free(locks);
+	free(recurs_count);
 	free(thread_wq);
 
 	return EXIT_SUCCESS;
