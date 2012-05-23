@@ -44,17 +44,40 @@ static void just_unlock(unsigned t, unsigned l)
  */
 
 static pthread_mutex_t m_lock = PTHREAD_MUTEX_INITIALIZER;
-static bool *thread_wq;	// list of locks we wait or hold, protected by m_lock.
+#define NB_BITS_PER_CELL 64
+static uint64_t *thread_wq;	// list of locks we wait or hold, protected by m_lock.
+static unsigned thread_stride;	// stride from one row to the next in the lock matrix
+#define THREAD_HOLD(t, l)  (thread_wq[((t) << thread_stride) + (l)/NB_BITS_PER_CELL] & (1ULL << ((l)%NB_BITS_PER_CELL)))
+#define THREAD_HOLD_GROUP(t, l)  (thread_wq[((t) << thread_stride) + (l)/NB_BITS_PER_CELL])
+#define THREAD_SET(t, l)   (thread_wq[((t) << thread_stride) + (l)/NB_BITS_PER_CELL] |= (1ULL << ((l)%NB_BITS_PER_CELL)))
+#define THREAD_CLEAR(t, l) (thread_wq[((t) << thread_stride) + (l)/NB_BITS_PER_CELL] &= ~(1ULL << ((l)%NB_BITS_PER_CELL)))
+
+static unsigned upper_multiple_of(unsigned n, unsigned m)
+{
+	unsigned u = m;
+	unsigned l = 1;
+	while (u < n) {
+		u += m;
+		l ++;
+	}
+	return l;
+}
 
 // starting from (t, l) can we go back to target thread?
 // As we are supposed to be cycle free we do not have to tag the matrix along the way.
 static bool is_looping(unsigned t, unsigned l, unsigned target)
 {
 	for (unsigned ll = 0; ll < nb_locks; ll ++) {
-		if (! thread_wq[t*nb_locks + ll]) continue;
-		if (ll == l) continue;	// we are not allowed to proceed from where we come from
+		if (0 == (ll&(NB_BITS_PER_CELL-1))) {
+			if (! THREAD_HOLD_GROUP(t, ll)) {
+				ll += NB_BITS_PER_CELL-1;
+				continue;
+			}
+		}
+		if (! THREAD_HOLD(t, ll)) continue;
+		if (ll == l) continue;	// we are not allowed to proceed to where we come from
 		for (unsigned tt = 0; tt < nb_threads; tt ++) {
-			if (! thread_wq[tt*nb_locks + ll]) continue;
+			if (! THREAD_HOLD(tt, ll)) continue;
 			if (tt == t) continue;
 			if (tt == target) return true;
 			if (is_looping(tt, ll, target)) return true;
@@ -70,7 +93,7 @@ static int matrix_lock(unsigned t, unsigned l)
 		assert(!"Cannot lock m_lock!?");
 	}
 
-	if (thread_wq[t*nb_locks + l]) {
+	if (THREAD_HOLD(t, l)) {
 #		ifndef NDEBUG
 		printf("thread %u: already got lock %u\n", t, l);
 #		endif
@@ -79,7 +102,7 @@ static int matrix_lock(unsigned t, unsigned l)
 	}
 
 	for (unsigned tt = 0; tt < nb_threads; tt ++) {
-		if (! thread_wq[tt*nb_locks + l]) continue;
+		if (! THREAD_HOLD(tt, l)) continue;
 		if (is_looping(tt, l, t)) {
 #			ifndef NDEBUG
 			printf("thread %u: lock %u would deadlock\n", t, l);
@@ -92,7 +115,7 @@ static int matrix_lock(unsigned t, unsigned l)
 #	ifndef NDEBUG
 	printf("thread %u: can safely wait for lock %u\n", t, l);
 #	endif
-	thread_wq[t*nb_locks + l] = true;
+	THREAD_SET(t, l);
 	pthread_mutex_unlock(&m_lock);	// since I've said that I'm waiting for the lock I can safely release m_lock
 
 	if (0 != pthread_mutex_lock(locks+l)) {
@@ -107,7 +130,7 @@ static void matrix_unlock(unsigned t, unsigned l)
 		assert(!"Cannot lock m_lock!?");
 	}
 
-	thread_wq[t*nb_locks + l] = false;
+	THREAD_CLEAR(t, l);
 
 	pthread_mutex_unlock(&m_lock);
 
@@ -256,14 +279,15 @@ int main(int nb_args, char **args)
 
 	srand(time(NULL));
 
+	thread_stride = upper_multiple_of(nb_locks, NB_BITS_PER_CELL);
 	pthread_ids = malloc(nb_threads * sizeof(*pthread_ids));
 	locks = malloc(nb_locks * sizeof(*locks));
-	thread_wq = malloc(nb_locks * nb_threads * sizeof(*thread_wq));
+	size_t const thread_wq_sz = (nb_threads << thread_stride) * sizeof(*thread_wq);
+	thread_wq = calloc(thread_wq_sz, 1);
 	if (!pthread_ids || !locks || !thread_wq) {
 		fprintf(stderr, "Cannot alloc.\n");
 		return EXIT_FAILURE;
 	}
-	memset(thread_wq, 0, nb_locks * nb_threads * sizeof(*thread_wq));
 
 	for (unsigned m = 0; m < nb_locks; m++) {
 		pthread_mutex_init(locks+m, NULL);
