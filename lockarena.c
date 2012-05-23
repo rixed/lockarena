@@ -156,9 +156,9 @@ static void *thread_run(void *idx)
 	while (! quit) {
 		unsigned nb_res = rand() % nb_claimed;	// how many locks I'm going to claim
 		unsigned claimed[nb_res];
-		unsigned c = 0;
+		unsigned l, c = 0;
 		__sync_add_and_fetch(&nb_trys, 1);
-		for (unsigned l = 0; l < nb_res; l++) {
+		for (l = 0; l < nb_res; l++) {
 			unsigned const lock = rand() % nb_locks;
 #			ifndef NDEBUG
 			printf("thread %u: taking lock %u\n", t, lock);
@@ -176,8 +176,11 @@ static void *thread_run(void *idx)
 			printf("thread %u: took lock %u\n", t, lock);
 #			endif
 		}
-		// Sleep for some time with my locks
-		usleep(rand() % max_sleep_usec);
+		if (l == nb_res) {	// do some work with the locks
+			// Sleep for some time with my locks
+			usleep(rand() % max_sleep_usec);
+		}
+		// Release all that was locked
 		while (c --) {
 #			ifndef NDEBUG
 			printf("thread %u: releasing lock %u\n", t, claimed[c]);
@@ -200,8 +203,8 @@ static void syntax(void)
 		" -m method     0 for no detection, 1 for dependency tracking, 2 for timedlocks\n"
 		" -t nb_threads\n"
 		" -l nb_locks\n"
-		" -c nb_claim   max number of mutexes to be locked in a run\n"
-		" -s usec       max number of microseconds to sleep when the mutexes are locked\n"
+		" -c nb_claim   number of required locks before each job\n"
+		" -s usec       job duration (in microseconds)\n"
 		" -d duration   number of seconds before the program (try to) terminate\n");
 }
 
@@ -265,7 +268,7 @@ int main(int nb_args, char **args)
 	}
 
 	sleep(duration);
-	printf("%"PRIu64" locks granted, %"PRIu64" errors (%.2f%%)\n", nb_trys-nb_errs, nb_errs, (100.*nb_errs)/nb_trys);
+	printf("%"PRIu64" jobs done, %"PRIu64" errors (%.2f%%)\n", nb_trys-nb_errs, nb_errs, (100.*nb_errs)/nb_trys);
 
 	printf("Exiting... (if no deadlocks...)\n");
 	quit = 1;
