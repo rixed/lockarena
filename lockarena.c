@@ -166,6 +166,43 @@ static int timed_lock(unsigned t, unsigned l)
 }
 
 /*
+ * Prevent deadlock by forcing ordering of taken locks
+ * This is easy and fast but will cause a *lot* of rejections, though.
+ */
+
+static int ordered_lock(unsigned t, unsigned l)
+{
+	if (recurs_count[t * nb_locks + l] > 0) {
+		recurs_count[t * nb_locks + l]++;
+		return 0;
+	}
+
+	for (unsigned ll = l+1; ll < nb_locks; ll ++) {
+		if (recurs_count[t * nb_locks + ll] > 0) {
+#			ifndef NDEBUG
+			printf("thread %u: cannot take lock %u while holding lock %u\n", t, l, ll);
+#			endif
+			return -1;
+		}
+	}
+
+	recurs_count[t * nb_locks + l]++;
+	if (0 != pthread_mutex_lock(locks+l)) {
+		assert(!"Cannot take lock?!");
+	}
+	return 0;
+}
+
+static void ordered_unlock(unsigned t, unsigned l)
+{
+	if (--recurs_count[t * nb_locks + l] > 0) {
+		return;
+	}
+
+	(void)pthread_mutex_unlock(locks+l);
+}
+
+/*
  * Tests...
  */
 
@@ -177,6 +214,7 @@ static struct {
 	{ "Just take it", just_lock, just_unlock },
 	{ "Matrix", matrix_lock, matrix_unlock },
 	{ "TimedLock", timed_lock, just_unlock },
+	{ "OrderedLock", ordered_lock, ordered_unlock },
 };
 
 static sig_atomic_t quit = 0;
