@@ -14,7 +14,9 @@
 
 #define NB_ELEMS(x) (sizeof(x) / sizeof(*(x)))
 
-static unsigned method = 1, nb_threads = 100, nb_locks = 100, nb_claimed = 3, max_sleep_usec = 1000, duration = 1;
+static unsigned method = 1, nb_threads = 100, nb_locks = 100;
+static unsigned nb_claimed = 3, max_sleep_usec = 1000, duration = 1;
+static unsigned long long timeout_nsec = 1000000ULL;
 static pthread_t *pthread_ids;
 static pthread_mutex_t *locks;
 static uint64_t nb_errs, nb_trys;
@@ -124,7 +126,7 @@ static int timed_lock(unsigned t, unsigned l)
     gettimeofday(&now, NULL);
 	struct timespec timeout = {
 		.tv_sec = now.tv_sec,
-		.tv_nsec = now.tv_usec*1000ULL + 1000000ULL // wait 1ms max before declaring deadlock
+		.tv_nsec = now.tv_usec*1000ULL + timeout_nsec
 	};
 	return pthread_mutex_timedlock(locks+l, &timeout);
 }
@@ -205,13 +207,14 @@ static void syntax(void)
 		" -l nb_locks\n"
 		" -c nb_claim   number of required locks before each job\n"
 		" -s usec       job duration (in microseconds)\n"
-		" -d duration   number of seconds before the program (try to) terminate\n");
+		" -d duration   number of seconds before the program (try to) terminate\n"
+		" -T timeout    for timedlocks (in nanoseconds)\n");
 }
 
 int main(int nb_args, char **args)
 {
 	int opt;
-	while ((opt = getopt(nb_args, args, "hm:t:l:c:s:d:")) != -1) {
+	while ((opt = getopt(nb_args, args, "hm:t:l:c:s:d:T:")) != -1) {
 		switch (opt) {
 			case 'h':
 				syntax();
@@ -234,6 +237,9 @@ int main(int nb_args, char **args)
 				break;
 			case 'd':
 				duration = strtoul(optarg, NULL, 0);
+				break;
+			case 'T':
+				timeout_nsec = strtoull(optarg, NULL, 0);
 				break;
 			case '?':
 				syntax();
